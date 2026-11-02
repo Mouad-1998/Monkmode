@@ -2,10 +2,8 @@
 Statische PWA: index.html, styles.css, app.js, sw.js, manifest.json, icons/.
 Daten: localStorage (Schlüssel `monkmode.v1`), Export/Import als JSON unter „Mehr“.
 
-Deploy (live, anonym, läuft am 16.11.2026 ab): https://9283a27867564d85.flypod.page
-Update: `cd /workspace/monk-deploy && npx flypod update` (vorher Dateien aus diesem Ordner kopieren).
+Gehostet auf GitHub Pages: https://mouad-1998.github.io/Monkmode/
 Bei Änderungen CACHE-Version in sw.js erhöhen.
-Dauerhaft: `npx flypod login` (claimt die Seite), oder GitHub Pages / Netlify / Vercel / Cloudflare Pages.
 
 ## v2 (02.11.2026)
 - Standard-Gewohnheiten (Sport, Schlaf 22–5, Lesen 1 Seite, Lernen 60 Min) per Migration ergänzt (flag `defaultsAdded`, nichts gelöscht).
