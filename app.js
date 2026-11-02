@@ -2,7 +2,7 @@
 /* ===== Storage ===== */
 const KEY = 'monkmode.v1';
 const defaultState = () => ({ version: 2, monk: null, monkHistory: [], habits: [], log: {}, ruleLog: {},
-  sleep: {}, social: {}, sunday: {}, weekScores: {}, lockAck: {}, timer: null, settings: { socialLimit: 120 }, firstDay: null, defaultsAdded: false });
+  sleep: {}, social: {}, sunday: {}, weekScores: {}, lockAck: {}, timer: null, settings: { socialLimit: 120 }, firstDay: null, defaultsAdded: false, deleted: {}, updatedAt: 0 });
 let S;
 function load() {
   let raw = null;
@@ -10,7 +10,8 @@ function load() {
   S = Object.assign(defaultState(), raw || {});
   migrate();
 }
-function save() { localStorage.setItem(KEY, JSON.stringify(S)); }
+function writeLocal() { localStorage.setItem(KEY, JSON.stringify(S)); }
+function save() { S.updatedAt = Date.now(); writeLocal(); if (window.onLocalSave) window.onLocalSave(); }
 
 /* ===== Date helpers (local time) ===== */
 const pad = n => String(n).padStart(2, '0');
@@ -55,8 +56,9 @@ function migrate() {
     defs.forEach(d => { if (!names.includes(d.name.toLowerCase())) S.habits.push(Object.assign({ id: uid(), created: t }, d)); });
     S.defaultsAdded = true;
   }
-  S.version = 2;
-  save();
+  if (!S.deleted || typeof S.deleted !== 'object') S.deleted = {};
+  S.version = 3;
+  writeLocal();
 }
 load();
 if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
@@ -465,7 +467,7 @@ function viewStats() {
 
 function viewSettings() {
   const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone;
-  return `<div class="card"><h2>Social-Media-Limit</h2><p class="small" style="margin-top:0">Aktuell: <b>${fmtMin(limit())}</b> pro Tag. Gehst du darüber, wird der Tag gesperrt (0 Punkte).</p>
+  return `${window.accountCard ? window.accountCard() : ''}<div class="card"><h2>Social-Media-Limit</h2><p class="small" style="margin-top:0">Aktuell: <b>${fmtMin(limit())}</b> pro Tag. Gehst du darüber, wird der Tag gesperrt (0 Punkte).</p>
     <div class="row" style="gap:8px"><input type="number" id="limitIn" min="15" max="600" step="15" inputmode="numeric" value="${limit()}"><button class="btn" data-act="savelimit">Speichern</button></div></div>
   <div class="card"><h2>Apps wirklich sperren</h2>
     <p class="small" style="margin-top:0">Diese App kann andere Apps nicht blockieren. Stell zusätzlich ein echtes Limit im System ein:</p>
@@ -476,7 +478,7 @@ function viewSettings() {
     <input type="file" id="importFile" accept="application/json,.json" hidden></div>
   ${!standalone ? `<div class="card"><h2>Zum Homescreen hinzufügen</h2><p class="small" style="margin:0 0 8px"><b>iPhone (Safari):</b> Teilen-Symbol <span class="muted">(Quadrat mit Pfeil)</span> → „Zum Home-Bildschirm“ → „Hinzufügen“.</p><p class="small" style="margin:0"><b>Android (Chrome):</b> Menü ⋮ → „App installieren“ bzw. „Zum Startbildschirm hinzufügen“.</p>${deferredPrompt ? '<div class="btns"><button class="btn primary" data-act="install">Jetzt installieren</button></div>' : ''}</div>` : ''}
   <div class="card"><h2>Gefahrenzone</h2><button class="btn danger block" data-act="reset">Alle Daten löschen</button></div>
-  <p class="muted small" style="text-align:center">Monk Mode · v2 · funktioniert offline</p>`;
+  <p class="muted small" style="text-align:center">Monk Mode · v3 · funktioniert offline</p>`;
 }
 
 /* ===== Sheets / forms ===== */
@@ -521,6 +523,7 @@ function habitForm(h) {
     if (del) del.onclick = () => {
       if (!confirm(`„${h.name}“ wirklich löschen? Der Verlauf geht verloren.`)) return;
       S.habits = S.habits.filter(x => x.id !== h.id);
+      S.deleted = S.deleted || {}; S.deleted[h.id] = Date.now();
       for (const d in S.log) { delete S.log[d][h.id]; if (!Object.keys(S.log[d]).length) delete S.log[d]; }
       if (S.timer && S.timer.id === h.id) S.timer = null;
       save(); closeSheet(); render(); toast('Gelöscht');
@@ -653,7 +656,7 @@ function bind(v) {
       case 'export': exportData(); break;
       case 'import': v.querySelector('#importFile').click(); break;
       case 'install': deferredPrompt && deferredPrompt.prompt(); break;
-      case 'reset': if (confirm('Wirklich ALLE Daten löschen? Das kann nicht rückgängig gemacht werden.')) { S = defaultState(); migrate(); render(); toast('Alle Daten gelöscht'); } break;
+      case 'reset': if (confirm(window.sbUser ? 'Wirklich ALLE Daten löschen – auf diesem Gerät UND in der Cloud? Das kann nicht rückgängig gemacht werden.' : 'Wirklich ALLE Daten löschen? Das kann nicht rückgängig gemacht werden.')) { S = defaultState(); migrate(); save(); render(); toast('Alle Daten gelöscht'); } break;
     }
   }));
   const sel = v.querySelector('#habitSel'); if (sel) sel.onchange = () => { statHabit = sel.value; render(); };
@@ -690,7 +693,7 @@ function importData(file) {
       delete d.exportedAt; delete d.app;
       S = Object.assign(defaultState(), d);
       if (!('defaultsAdded' in d)) S.defaultsAdded = false;
-      migrate(); render(); toast('Backup importiert ✓');
+      migrate(); save(); render(); toast('Backup importiert ✓');
     } catch (e) { toast('Ungültige Backup-Datei'); }
   };
   r.readAsText(file);

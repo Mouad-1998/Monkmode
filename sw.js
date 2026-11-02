@@ -1,5 +1,5 @@
-const CACHE = 'monk-mode-v3';
-const ASSETS = ['./', './index.html', './styles.css', './app.js', './manifest.json',
+const CACHE = 'monk-mode-v4';
+const ASSETS = ['./', './index.html', './styles.css', './app.js', './sync.js', './vendor/supabase.js', './manifest.json',
   './icons/icon-192.png', './icons/icon-512.png', './icons/maskable-512.png',
   './icons/apple-touch-icon.png', './icons/favicon-32.png'];
 self.addEventListener('install', e => {
