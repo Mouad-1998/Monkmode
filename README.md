@@ -18,3 +18,11 @@ Bei Änderungen CACHE-Version in sw.js erhöhen.
 - Sync: lokale Änderung → nach 1,5 s Upload; beim Öffnen/Wieder-sichtbar/online → Abgleich. Konflikte: Abhakungen werden vereinigt, sonst gewinnt die neuere Version.
 - sw.js: Cache `monk-mode-v4`.
 - Manuell im Supabase-Dashboard: Authentication → URL Configuration → Site URL `https://mouad-1998.github.io/Monkmode/` und als Redirect URL eintragen.
+
+## v4 – Neugestaltung + robuste Speicherung (04.11.2026)
+- „Gewohnheiten“-Bereich entfernt: **Monk Mode = deine Ziele** (`S.goals`, Typen check / minutes / pages / count / sleep), anlegen, bearbeiten, löschen, sortieren. Optionaler Challenge-Zeitraum (`S.challenge`).
+- Migration v1–v3 → v4 (`store.js: migrateState`): `habits` → `goals` (gleiche IDs, Verlauf bleibt), Monk-Regeln → Abhak-Ziele (`ruleLog` → `log`), `monk` → `challenge`, `monkHistory` → `challengeHistory`, `timer` → `focus`. Originalstand bleibt als `localStorage['monkmode.v3.original']` und IndexedDB `snap:vor-v4`.
+- Heute: Countdown bis Schlafenszeit + Mitternacht, Tagesbalken, Fortschritt (Ziele, Minuten, Seiten, Serie, „Scrollen ersetzt“), rotierende Zitate, Fokus-Timer, „Statt Scrollen“-Vorschläge (an offene Ziele gekoppelt, 1 Tipp zum Starten/Eintragen).
+- Speicherung: jede Änderung synchron in localStorage (`monkmode.v1`), zusätzlich IndexedDB (`monkmode/kv/state`) + Tages-Snapshots (21 Tage), Flush bei pagehide/visibilitychange/freeze, `navigator.storage.persist()`, Wiederherstellung aus IndexedDB, Hinweise bei In-App-Browser / Safari-Tab.
+- Sync: Zeitstempel pro Eintrag (`S.ts`) → Ent-Haken/Änderungen überleben das Zusammenführen; Änderungen während eines Uploads gehen nicht mehr verloren (`localRev`); eine leere Cloud-Zeile überschreibt nie echte lokale Daten; vor jeder Cloud-Übernahme lokaler Snapshot.
+- sw.js: Cache `monk-mode-v5`, löscht nur eigene `monk-mode-*`-Caches, ignoriert `english/`, skipWaiting + clients.claim, Update-Hinweis „Neue Version ist da“.

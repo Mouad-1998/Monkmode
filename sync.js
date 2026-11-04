@@ -41,58 +41,15 @@ function setStatus(s, msg) {
   if (dot) { dot.className = 'syncdot ' + (!window.sbUser ? '' : !navigator.onLine ? 'off' : s === 'error' ? 'err' : s === 'syncing' ? 'busy' : 'ok'); }
 }
 
-/* ---------- Merge ---------- */
-const DEFAULT_NAMES = ['sport', 'schlaf 22–5 uhr', 'lesen – mind. 1 seite', 'lernen – mind. 1 stunde'];
-function hasRealData(st) {
-  if (!st) return false;
-  const nonEmpty = o => o && Object.keys(o).length > 0;
-  return nonEmpty(st.log) || nonEmpty(st.social) || nonEmpty(st.sunday) || nonEmpty(st.sleep) || nonEmpty(st.ruleLog) || !!st.monk ||
-    (st.monkHistory || []).length > 0 || (st.habits || []).some(h => !DEFAULT_NAMES.includes(String(h.name).toLowerCase()));
-}
-const clone = o => JSON.parse(JSON.stringify(o || {}));
-function mergeStates(a, b) {
-  a = Object.assign(defaultState(), clone(a)); b = Object.assign(defaultState(), clone(b));
-  const newer = (a.updatedAt || 0) >= (b.updatedAt || 0) ? a : b, older = newer === a ? b : a;
-  const out = clone(newer);
-  out.deleted = Object.assign({}, older.deleted, newer.deleted);
-  // Gewohnheiten: Vereinigung nach ID, bei gleicher ID gewinnt die neuere Version
-  const byId = new Map();
-  older.habits.forEach(h => byId.set(h.id, h));
-  newer.habits.forEach(h => byId.set(h.id, h));
-  const order = [...newer.habits.map(h => h.id), ...older.habits.map(h => h.id).filter(id => !newer.habits.some(h => h.id === id))];
-  let habits = order.map(id => byId.get(id)).filter(h => !out.deleted[h.id]);
-  // gleiche Gewohnheit (gleicher Name) auf zwei Geräten angelegt -> zusammenlegen
-  const remap = {}; const seen = {};
-  habits = habits.filter(h => { const k = String(h.name).trim().toLowerCase() + '|' + (h.type || ''); if (seen[k]) { remap[h.id] = seen[k].id; if (h.created && h.created < (seen[k].created || '9')) seen[k].created = h.created; return false; } seen[k] = h; return true; });
-  out.habits = habits;
-  // Tages-Abhakungen: Vereinigung (höherer Wert gewinnt)
-  out.log = {};
-  for (const src of [older.log, newer.log]) for (const d in src) for (const id0 in src[d]) {
-    const id = remap[id0] || id0; if (out.deleted[id]) continue;
-    out.log[d] = out.log[d] || {}; out.log[d][id] = Math.max(out.log[d][id] || 0, src[d][id0] || 0);
-  }
-  out.ruleLog = {};
-  for (const src of [older.ruleLog, newer.ruleLog]) for (const d in src) out.ruleLog[d] = [...new Set([...(out.ruleLog[d] || []), ...(src[d] || [])])];
-  out.sleep = {};
-  for (const src of [older.sleep, newer.sleep]) for (const d in src) for (const id0 in src[d]) { const id = remap[id0] || id0; out.sleep[d] = out.sleep[d] || {}; out.sleep[d][id] = src[d][id0]; }
-  out.social = Object.assign({}, older.social, newer.social);
-  out.sunday = Object.assign({}, older.sunday, newer.sunday);
-  out.weekScores = Object.assign({}, older.weekScores, newer.weekScores);
-  out.lockAck = Object.assign({}, older.lockAck, newer.lockAck);
-  const hk = h => `${h.name}|${h.start}|${h.endedAt}`; const hm = new Map();
-  [...older.monkHistory, ...newer.monkHistory].forEach(h => hm.set(hk(h), h)); out.monkHistory = [...hm.values()];
-  out.firstDay = [a.firstDay, b.firstDay].filter(Boolean).sort()[0] || null;
-  out.defaultsAdded = !!(a.defaultsAdded || b.defaultsAdded);
-  if (out.timer && remap[out.timer.id]) out.timer.id = remap[out.timer.id];
-  out.updatedAt = Date.now();
-  return out;
-}
+/* ---------- Übernahme ---------- */
+// mergeStates/hasRealData/migrateState kommen aus store.js
 function applyState(st) {
-  S = Object.assign(defaultState(), st);
-  if (!('defaultsAdded' in st)) S.defaultsAdded = false;
-  migrate(); // schreibt nur lokal
+  snapshotNamed('vor-cloud-' + Date.now()); // lokaler Stand bleibt als Sicherung erhalten
+  S = migrateState(st);
+  writeLocal();
   render();
 }
+let localRev = 0; // zählt jede lokale Änderung (gegen verlorene Änderungen während eines Uploads)
 
 /* ---------- Sync ---------- */
 async function fetchRemote() {
@@ -101,9 +58,13 @@ async function fetchRemote() {
   return data;
 }
 async function pushRemote() {
+  const rev = localRev;
   const { data, error } = await sb.from('user_data').upsert({ user_id: window.sbUser.id, data: S }, { onConflict: 'user_id' }).select('updated_at').single();
   if (error) throw error;
-  meta.lastRemote = data.updated_at; meta.dirty = false; meta.lastSync = Date.now(); saveMeta();
+  meta.lastRemote = data.updated_at; meta.lastSync = Date.now();
+  meta.dirty = rev !== localRev; // während des Uploads geändert? -> bleibt "ausstehend" und wird gleich nochmal hochgeladen
+  saveMeta();
+  if (meta.dirty) syncAgain = true;
 }
 function askChoice() {
   return new Promise(resolve => {
@@ -137,15 +98,16 @@ async function syncNow() {
       else {
         const c = await askChoice();
         if (c === 'cloud') { applyState(remote.data); meta.lastRemote = remote.updated_at; meta.dirty = false; meta.lastSync = Date.now(); saveMeta(); }
-        else { if (c === 'merge') applyState(mergeStates(S, remote.data)); S.updatedAt = Date.now(); writeLocal(); await pushRemote(); }
+        else { if (c === 'merge') { snapshotNamed('vor-cloud-' + Date.now()); S = mergeStates(S, remote.data); render(); } S.updatedAt = Date.now(); writeLocal(); await pushRemote(); }
         toast('Synchronisiert ✓');
       }
     } else if (!meta.dirty) {
-      // anderes Gerät hat etwas geändert, hier nichts Neues -> übernehmen
-      applyState(remote.data); meta.lastRemote = remote.updated_at; meta.lastSync = Date.now(); saveMeta();
+      // anderes Gerät hat etwas geändert, hier nichts Neues
+      if (hasRealData(S) && !hasRealData(remote.data)) { await pushRemote(); }            // nie leere Cloud über echte Daten
+      else { applyState(remote.data); meta.lastRemote = remote.updated_at; meta.lastSync = Date.now(); saveMeta(); }
     } else {
-      // beide Seiten geändert -> zusammenführen
-      applyState(mergeStates(S, remote.data)); writeLocal(); await pushRemote();
+      // beide Seiten geändert -> zusammenführen (pro Eintrag gewinnt die neueste Änderung)
+      S = mergeStates(S, remote.data); writeLocal(); render(); await pushRemote();
     }
     setStatus('ok');
   } catch (e) {
@@ -158,10 +120,11 @@ async function syncNow() {
   }
 }
 function scheduleSync(ms) { clearTimeout(syncTimer); syncTimer = setTimeout(syncNow, ms == null ? 1500 : ms); }
-window.onLocalSave = () => { if (!window.sbUser) return; meta.dirty = true; saveMeta(); setStatus(status.s === 'error' ? 'error' : 'idle', status.msg); scheduleSync(); };
+window.onLocalSave = () => { localRev++; if (!window.sbUser) return; meta.dirty = true; saveMeta(); setStatus(status.s === 'error' ? 'error' : 'idle', status.msg); scheduleSync(); };
 window.addEventListener('online', () => { setStatus('idle'); scheduleSync(200); });
 window.addEventListener('offline', () => setStatus('idle'));
-document.addEventListener('visibilitychange', () => { if (!document.hidden) scheduleSync(300); else if (meta.dirty) syncNow(); });
+document.addEventListener('visibilitychange', () => { if (!document.hidden) scheduleSync(300); else if (meta.dirty && window.sbUser) syncNow(); });
+window.addEventListener('pagehide', () => { if (meta.dirty && window.sbUser) syncNow(); });
 
 /* ---------- Auth ---------- */
 const AUTH_ERR = [
@@ -194,7 +157,7 @@ window.accountCard = function () {
     </form>
     <p id="authMsg" class="small"></p>
     <button class="btn ghost block small" data-acc="reset" style="margin-top:4px">Passwort vergessen?</button>
-    <p class="muted small" style="margin-bottom:0">Nach dem Registrieren bekommst du eine E-Mail. <b>Bitte bestätige deine E-Mail-Adresse</b> über den Link – danach kannst du dich hier anmelden.</p></div>`;
+    <p class="muted small" style="margin-bottom:0">Nach dem Registrieren bekommst du eine E-Mail. <b>Bitte bestätige deine E-Mail-Adresse</b> über den Link. Wichtig auf dem iPhone: Der Link öffnet Safari – öffne danach Monk Mode <b>vom Home-Bildschirm</b> und melde dich dort mit E-Mail und Passwort an.</p></div>`;
 };
 
 document.addEventListener('click', async e => {
@@ -221,7 +184,7 @@ document.addEventListener('click', async e => {
       if (error) throw error;
       authMsg('Falls ein Konto existiert, haben wir dir einen Link zum Zurücksetzen geschickt.', true);
     } else if (act === 'logout') {
-      if (meta.dirty && navigator.onLine) await syncNow();
+      flush(); if (meta.dirty && navigator.onLine) await syncNow();
       if (!confirm('Abmelden? Deine Daten bleiben auf diesem Gerät gespeichert, werden aber nicht mehr synchronisiert.')) return;
       await sb.auth.signOut();
       meta = { uid: null, lastRemote: null, lastSync: null, dirty: false }; saveMeta();
@@ -262,4 +225,4 @@ if (sb) {
   }
 }
 // Status-Punkt in der Kopfzeile
-(function () { const h = document.querySelector('.topbar'); if (h && !document.getElementById('syncDot')) { const d = document.createElement('i'); d.id = 'syncDot'; d.className = 'syncdot'; d.title = 'Cloud-Sync'; h.appendChild(d); d.onclick = () => go('settings'); } })();
+(function () { const h = document.getElementById('topright') || document.querySelector('.topbar'); if (h && !document.getElementById('syncDot')) { const d = document.createElement('i'); d.id = 'syncDot'; d.className = 'syncdot'; d.title = 'Cloud-Sync'; h.appendChild(d); d.onclick = () => go('settings'); } })();
